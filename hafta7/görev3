@@ -1,0 +1,58 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+torch.manual_seed(1337)
+torch.set_printoptions(precision=3, sci_mode=False, linewidth=150)
+
+vocab_size, block_size, n_embd, head_size = 65, 8, 32, 16
+B, T = 4, 8
+
+
+# Tek bir self-attention head
+class Head(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer("tril", torch.tril(torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)      # (B, T, head_size)
+        q = self.query(x)    # (B, T, head_size)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5   # (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)
+        v = self.value(x)    # (B, T, head_size)
+        return wei @ v, wei
+
+
+# Token embedding + pozisyon embedding
+token_emb = nn.Embedding(vocab_size, n_embd)
+pos_emb = nn.Embedding(block_size, n_embd)
+
+idx = torch.randint(0, vocab_size, (B, T))
+x = token_emb(idx) + pos_emb(torch.arange(T))   # (B, T, C)
+
+head = Head()
+out, wei = head(x)
+print("x:", x.shape, "| out:", out.shape, "| wei:", wei.shape)
+
+# Bir örnekte wei ve bir satırı
+print("\nİlk örneğin wei matrisi:")
+print(wei[0])
+print("\nSatır 5 (6. token):", wei[0, 5])
+print("Satır toplamı:", wei[0, 5].sum().item())
+
+# sqrt(head_size) ile bölmek: sayıyla gösterim
+hs = 64
+q = torch.randn(B, T, hs)
+k = torch.randn(B, T, hs)
+raw = q @ k.transpose(-2, -1)
+scaled = raw * hs ** -0.5
+
+print(f"\nVaryans, bölmeden: {raw.var().item():.2f} | bölerek: {scaled.var().item():.2f}")
+print("softmax, bölmeden:", F.softmax(raw[0, -1], dim=-1))
+print("softmax, bölerek :", F.softmax(scaled[0, -1], dim=-1))
